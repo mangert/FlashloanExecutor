@@ -1,13 +1,5 @@
 import { loadFixture, ethers, expect } from "./setup";
-
-//техническая функция для перевода строк в 6 байтовые переменные
-function toBytes6(str: string): `0x${string}` {
-    const bytes = ethers.toUtf8Bytes(str);
-    if (bytes.length > 6) {
-        throw new Error("String too long for bytes6");
-    }
-    return ethers.hexlify(ethers.zeroPadValue(bytes, 6)) as `0x${string}`;
-}    
+import { toBytes6 } from"./test-helpers";
 
 describe("Chainlink Oracle", function() {
     async function deploy() {                

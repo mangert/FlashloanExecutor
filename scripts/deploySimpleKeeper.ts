@@ -4,28 +4,30 @@ import hre, { ethers, run } from "hardhat";
 //скрипт для деплоя и верификации
 async function main() {
     
-    const contractName = process.env.CONTRACT || "FlashloanExecutor";
+    const contractName = process.env.CONTRACT || "SimpleKeeper";
     
-     //деплой
+    //деплой
     console.log("DEPLOYING...");
     const [deployer, owner] = await ethers.getSigners();
+    
+    const interval = 600n; //аргумент конструктора
 
-    const executor_Factory = await ethers.getContractFactory(contractName);
-    const executor = await executor_Factory.deploy();    
-    await executor.waitForDeployment(); 
+    const keeper_Factory = await ethers.getContractFactory(contractName);
+    const keeper = await keeper_Factory.deploy(interval);    
+    await keeper.waitForDeployment(); 
 
-    const contractAddress = await executor.getAddress();
+    const contractAddress = await keeper.getAddress();
     console.log("Deployed contract at:", contractAddress);
     
     //ждем подтверждения, чтобы верификация не отвалилась
-    const tx = executor.deploymentTransaction();
+    const tx = keeper.deploymentTransaction();
     if (tx) {
         await tx.wait(5); // ← ждем 5 подтверждений
     }        
    
     //верификация
     console.log("VERIFY...");
-    const constructorArgs: any[] = []; // если без аргументов
+    const constructorArgs: any[] = [interval]; // берем аргумент
     
     try {
        await run("verify:verify", {
@@ -48,3 +50,5 @@ main()
         console.error(error); 
         process.exit(1);
     });
+
+   
