@@ -6,7 +6,7 @@ import "./IExecutorErrors.sol"; //интерфейс для ошибок
 import "@aave/core-v3/contracts/flashloan/base/FlashLoanSimpleReceiverBase.sol";
 import "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
 import "@aave/core-v3/contracts/interfaces/IPool.sol";*/
-import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+import { AggregatorV3Interface } from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 
 /*
 interface IUniswapV2Router {
@@ -49,7 +49,7 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
         
         owner = msg.sender;
         
-        //начальные установки добавим в справочник фиды для двуз пар 
+        //начальные установки добавим в справочник фиды для двух пар 
         //потом можно будет добавлять через функцию
         priceFeeds[bytes6 ("ETHUSD")] = 0x694AA1769357215DE4FAC081bf1f309aDC325306;
         priceFeeds[bytes6 ("DAIUSD")] = 0x14866185B1962B63C3Ea9E03Bc1da838bab34C19;    
@@ -61,16 +61,30 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
      */
     function getPriceFromChainlink(bytes6 pair) public view returns (uint256) {
         
-        AggregatorV3Interface priceFeed = AggregatorV3Interface(priceFeeds[pair]);
+        address feedAddr = priceFeeds[pair];
         //проверяем, что наша пара есть в справочнике
-        require(priceFeeds[pair]!= address(0), FeedNotFound(pair)); 
+        require(feedAddr != address(0), FeedNotFound(pair));
+        //проверяем, что на полученном адресс вообще есть код
+        require(feedAddr.code.length > 0, FeedIsNotContract(pair));        
+        
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(feedAddr);
         
         //запрашиваем цену в chainlink
-        //второй возрващаемый параметр, остальные не нужны
-        (, int256 price, , ,) = priceFeed.latestRoundData(); 
+        //(второй возвращаемый параметр)
+        (
+            uint80 roundId,
+            int256 price,
+            ,
+            uint256 updatedAt,
+            uint80 answeredInRound
+        ) = priceFeed.latestRoundData();
         
-        require(price > 0, InvalidPriceReceipt()); //цена должна быть положительная
-        
+        //цена должна быть положительная
+        require(price > 0, InvalidPriceReceipt()); 
+        // Проверка, что ответ не устарел и данные получены недавно
+        require(answeredInRound >= roundId &&
+                (block.timestamp - updatedAt < 3600) //меньше часа
+                , OutdatedPriceData());
         return uint256(price);
     }
 

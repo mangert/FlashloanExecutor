@@ -19,9 +19,20 @@ interface IExecutorErrors {
     error FeedNotFound(bytes6 pair);
 
     /**
+     * @notice ошибка индицирует попытку обращения к фиду по адресу, не являщемуся адресом контракта
+     * @param pair идентификатор запрашиваемой пары
+     */
+    error FeedIsNotContract(bytes6 pair);
+
+    /**
      * @notice ошибка при получении цены с chainlink - получено отрицательное значение     
      */
     error InvalidPriceReceipt();
+
+    /**
+     * @notice ошибка при получении цены с chainlink - устаревшие данные
+     */
+    error OutdatedPriceData();
 
     
 }
