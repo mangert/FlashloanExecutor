@@ -7,37 +7,96 @@ import "@aave/core-v3/contracts/flashloan/base/FlashLoanSimpleReceiverBase.sol";
 import "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
 import "@aave/core-v3/contracts/interfaces/IPool.sol";*/
 import { AggregatorV3Interface } from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+import { IUniswapV3Pool } from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
+import { ISwapRouter } from "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
+
 
 /*
 interface IUniswapV2Router {
     function swapExactTokensForTokens(...) external returns (...); // заглушка
 }*/
 
-/**
- * @notice демонстрационный контракт
- */
+
+/// @notice демонстрационный контракт
 contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*/
     
-    /// @notice  событие индицирует получение 
-    event OracleChecked(uint256 pairPrice, bytes6 pair);
+    address public constant SWAP_ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
+    address public constant USDC = 0x8FB555D6e3A2f37CFFFdbCFd93c6cCFcEC4f5F3C; //сделать справочник?
 
-    /// @notice  событие индицирует добавление новой поддерживаемой пары
+    function getPriceFromPool(address pool) public view returns (uint256 price) {
+        (uint160 sqrtPriceX96,, , , , ,) = IUniswapV3Pool(pool).slot0();
+        // price = (sqrtPriceX96^2) / (2^192)
+        return (uint256(sqrtPriceX96) * uint256(sqrtPriceX96)) >> (96 * 2);
+    }
+    
+    function swapExactETHForUSDC() external payable {
+    ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+        tokenIn: address(0), // ETH
+        tokenOut: USDC,
+        fee: 500, // 0.05%
+        recipient: msg.sender,
+        deadline: block.timestamp + 300,
+        amountIn: msg.value,
+        amountOutMinimum: 0,
+        sqrtPriceLimitX96: 0
+    });
+
+    ISwapRouter(SWAP_ROUTER).exactInputSingle{ value: msg.value }(params);
+}
+
+                                   
+
+    /// @notice  событие индицирует получение ценовой информации от фида Chainlink
+    /// @param  pairPrice полученное значение цены
+    /// @param  pair обозначение валютной пары
+    event OracleChecked(uint256 pairPrice, bytes8 pair);
+
+    /// @notice событие индицирует факт вывода средств с контракта (ETH)
+    /// @param  value сумма вывода
+    /// @param  recipient адрес вывода
+    event FundsWithdrawn(uint256 value, address indexed recipient);    
+
+    /// @notice  событие индицирует добавление новой поддерживаемой пары в список фидов
     /// @param pair наименование пары
-    event NewPairAdded(bytes6 pair);
+    event NewFeedAdded(bytes8 pair);
+
+    /// @notice  событие индицирует добавление новой поддерживаемой пары в список пулов
+    /// @param pair наименование пары
+    event NewPoolAdded(bytes8 pair);
+
+    /// @notice ошибка указывает на недостаточность средств на контракте для проведения операции
+    /// @param needed требуемая сумма
+    /// @param balance располагаемая сумма
+    error InsufficientFunds (uint256 needed, uint256 balance);
+    
+    /// @notice ошибка индицирует неуспешный вывод средств с контракта
+    /// @param amount сумма вывода
+    ///@param recipient адрес вывода
+    error MoneyTransferFailed(uint256 amount, address recipient);
     
     /// @notice адрес владельца
     address public owner;
     
-    /// @notice хранилище адресов фидов для валютных пар
+    /// @notice хранилище адресов фидов chainlink для валютных пар
     /// имя пары => адрес фида
     mapping (
-        bytes6  pair =>
+        bytes8  pair =>
         address priceFeedAddress
-    ) priceFeeds;
+    ) chainlinkPriceFeeds;   
+
+    /// @notice хранилище адресов токенов для Uniswap
+    /// тикер токена => адрес контракта токена
+    mapping (
+        bytes8  tokenName =>
+        address tokenAddress
+    ) tokenAddresses;  
     
-    /// @notice адрес Chainlink фида ETH/USD 
-    //address private priceFeedETHUSD  = 0x694AA1769357215DE4FAC081bf1f309aDC325306;
-    //AggregatorV3Interface public priceFeed;
+    /// @notice хранилище адресов uniswap пулов для валютных пар
+    /// имя пары => адрес пула
+    mapping (
+        bytes8  pair =>
+        address uniswapPool
+    ) uniswapPools;   
 
     //модификатор проверяет права на выполнение функций только для владельца
     modifier onlyOwner() {
@@ -47,21 +106,22 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
     
     constructor() {
         
-        owner = msg.sender;
-        
-        //начальные установки добавим в справочник фиды для двух пар 
+        owner = msg.sender;        
+        //начальные установки: добавим в справочник фиды Chainlink для двух пар 
         //потом можно будет добавлять через функцию
-        priceFeeds[bytes6 ("ETHUSD")] = 0x694AA1769357215DE4FAC081bf1f309aDC325306;
-        priceFeeds[bytes6 ("DAIUSD")] = 0x14866185B1962B63C3Ea9E03Bc1da838bab34C19;    
+        chainlinkPriceFeeds[bytes8 ("ETHUSD")] = 0x694AA1769357215DE4FAC081bf1f309aDC325306;
+        chainlinkPriceFeeds[bytes8 ("DAIUSD")] = 0x14866185B1962B63C3Ea9E03Bc1da838bab34C19;    
+
+        //начальные установки: добавим в справочник адреса токенов в Sepolia
+        uniswapPools["USDCETH"] = 0x3289680dD4d6C10bb19b899729cda5eEF58AEfF1;
     }
 
-    /**
-     * @notice функция возвращает цену анализируемой пары
-     * @param pair имя пары
-     */
-    function getPriceFromChainlink(bytes6 pair) public view returns (uint256) {
+    
+    /// @notice функция возвращает цену анализируемой пары
+    /// @param pair имя пары    
+    function getPriceFromChainlink(bytes8 pair) public view returns (uint256) {
         
-        address feedAddr = priceFeeds[pair];
+        address feedAddr = chainlinkPriceFeeds[pair];
         //проверяем, что наша пара есть в справочнике
         require(feedAddr != address(0), FeedNotFound(pair));
         //проверяем, что на полученном адресс вообще есть код
@@ -88,15 +148,23 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
         return uint256(price);
     }
 
-    /**
-     * @notice функция позволяет расширить список используемых пар
-     * @param pair наимнеование пары (без пробелов и слэшей)
-     * @param feedAddress адрес фида из документации chainlink
-     */
-    function addNewPair(bytes6 pair, address feedAddress) onlyOwner() external {
+    
+    /// @notice функция позволяет расширить список используемых пар
+    /// @param pair наимнеование пары (без пробелов и слэшей)
+    /// @param feedAddress адрес фида из документации chainlink
+        function addNewFeed(bytes8 pair, address feedAddress) onlyOwner() external {
         
-        priceFeeds[pair] = feedAddress;
-        emit NewPairAdded(pair);
+        chainlinkPriceFeeds[pair] = feedAddress;
+        emit NewFeedAdded(pair);
+    }
+
+    /// @notice функция позволяет расширить список используемых пар
+    /// @param pair наимнеование пары (без пробелов и слэшей)
+    /// @param poolAddress адрес фида из документации chainlink
+        function addNewPool(bytes8 pair, address poolAddress) onlyOwner() external {
+        
+        uniswapPools[pair] = poolAddress;
+        emit NewPoolAdded(pair);
     }
     
     //uint256 public priceThreshold;
@@ -155,4 +223,16 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
     function setThreshold(uint256 newThreshold) external onlyOwner {
         priceThreshold = newThreshold;
     }*/
+
+   
+    /// @notice функция позволяет вывести средства с контракта
+    /// @param amount сумма вывода
+    /// @param recipient адрес вывода    
+   function withrawFunds (uint256 amount, address payable recipient) external onlyOwner() {
+        
+        require(amount <= address(this).balance, InsufficientFunds (amount, address(this).balance));
+
+        (bool success, ) = recipient.call{value: amount}("");
+        require(!success, MoneyTransferFailed(amount, recipient));
+    }
 }

@@ -16,13 +16,13 @@ interface IExecutorErrors {
      * @notice ошибка индицирует попытку использования неподдерживаемой пары
      * @param pair идентификатор запрашиваемой пары
      */
-    error FeedNotFound(bytes6 pair);
+    error FeedNotFound(bytes8 pair);
 
     /**
      * @notice ошибка индицирует попытку обращения к фиду по адресу, не являщемуся адресом контракта
      * @param pair идентификатор запрашиваемой пары
      */
-    error FeedIsNotContract(bytes6 pair);
+    error FeedIsNotContract(bytes8 pair);
 
     /**
      * @notice ошибка при получении цены с chainlink - получено отрицательное значение     

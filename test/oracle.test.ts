@@ -1,5 +1,5 @@
 import { loadFixture, ethers, expect } from "./setup";
-import { toBytes6 } from"./test-helpers";
+import { toBytes8 } from"./test-helpers";
 
 describe("Chainlink Oracle", function() {
     async function deploy() {                
@@ -28,10 +28,10 @@ describe("Chainlink Oracle", function() {
         const executor = await Executor.deploy();
 
         // Подключаем пары        
-        await executor.addNewPair(toBytes6("VALID"), validFeed.getAddress());        
-        await executor.addNewPair(toBytes6("OLD"), outdatedFeed.getAddress());
-        await executor.addNewPair(toBytes6("NEG"), invalidFeed.getAddress());
-        await executor.addNewPair(toBytes6("ZERO"), zeroPriceFeed.getAddress());
+        await executor.addNewPair(toBytes8("VALID"), validFeed.getAddress());        
+        await executor.addNewPair(toBytes8("OLD"), outdatedFeed.getAddress());
+        await executor.addNewPair(toBytes8("NEG"), invalidFeed.getAddress());
+        await executor.addNewPair(toBytes8("ZERO"), zeroPriceFeed.getAddress());
 
         return {user0, user1, user2, executor, validFeed, outdatedFeed, invalidFeed, zeroPriceFeed}
 
@@ -42,7 +42,7 @@ describe("Chainlink Oracle", function() {
         const {user0, executor} 
             = await loadFixture(deploy);            
         //выбираем пару - фактически выбираем фид - валидный            
-        const price = await executor.connect(user0).getPriceFromChainlink(toBytes6("VALID"));
+        const price = await executor.connect(user0).getPriceFromChainlink(toBytes8("VALID"));
         expect(price).to.equal(1000n);
     });
     //проверим, что при получении устаревших данных вылетает ошибка        
@@ -50,7 +50,7 @@ describe("Chainlink Oracle", function() {
         const {user0, executor} 
             = await loadFixture(deploy);                
         await expect(
-            executor.connect(user0).getPriceFromChainlink(toBytes6("OLD"))
+            executor.connect(user0).getPriceFromChainlink(toBytes8("OLD"))
         ).to.be.revertedWithCustomError(executor, "OutdatedPriceData");
     });
     //проверим, что при получении некорретной (отрицательной) цены вылетает ошибка
@@ -58,7 +58,7 @@ describe("Chainlink Oracle", function() {
         const {user0, executor} 
             = await loadFixture(deploy);   
         await expect(
-            executor.connect(user0).getPriceFromChainlink(toBytes6("NEG"))
+            executor.connect(user0).getPriceFromChainlink(toBytes8("NEG"))
         ).to.be.revertedWithCustomError(executor, "InvalidPriceReceipt");
         });
 
@@ -67,7 +67,7 @@ describe("Chainlink Oracle", function() {
             const {user0, executor } 
                 = await loadFixture(deploy);   
             await expect(
-                executor.getPriceFromChainlink(toBytes6("ZERO"))
+                executor.getPriceFromChainlink(toBytes8("ZERO"))
             ).to.be.revertedWithCustomError(executor, "InvalidPriceReceipt");
         });
 
@@ -76,7 +76,7 @@ describe("Chainlink Oracle", function() {
             const {user0, executor } 
                 = await loadFixture(deploy);   
             await expect(
-                executor.getPriceFromChainlink(toBytes6("XXX"))
+                executor.getPriceFromChainlink(toBytes8("XXX"))
             ).to.be.revertedWithCustomError(executor, "FeedNotFound");
         });
 });
