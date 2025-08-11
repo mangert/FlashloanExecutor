@@ -2,6 +2,8 @@
 pragma solidity ^0.8.30;
 
 import "./IExecutorErrors.sol"; //интерфейс для ошибок
+
+import { IERC20Metadata } from "@openzeppelin/contracts/interfaces/IERC20Metadata.sol";
 /*
 import "@aave/core-v3/contracts/flashloan/base/FlashLoanSimpleReceiverBase.sol";
 import "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
@@ -11,40 +13,12 @@ import { IUniswapV3Pool } from "@uniswap/v3-core/contracts/interfaces/IUniswapV3
 import { ISwapRouter } from "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
 
 
-/*
-interface IUniswapV2Router {
-    function swapExactTokensForTokens(...) external returns (...); // заглушка
-}*/
-
-
 /// @notice демонстрационный контракт
 contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*/
     
     address public constant SWAP_ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
-    address public constant USDC = 0x8FB555D6e3A2f37CFFFdbCFd93c6cCFcEC4f5F3C; //сделать справочник?
-
-    function getPriceFromPool(address pool) public view returns (uint256 price) {
-        (uint160 sqrtPriceX96,, , , , ,) = IUniswapV3Pool(pool).slot0();
-        // price = (sqrtPriceX96^2) / (2^192)
-        return (uint256(sqrtPriceX96) * uint256(sqrtPriceX96)) >> (96 * 2);
-    }
-    
-    function swapExactETHForUSDC() external payable {
-    ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
-        tokenIn: address(0), // ETH
-        tokenOut: USDC,
-        fee: 500, // 0.05%
-        recipient: msg.sender,
-        deadline: block.timestamp + 300,
-        amountIn: msg.value,
-        amountOutMinimum: 0,
-        sqrtPriceLimitX96: 0
-    });
-
-    ISwapRouter(SWAP_ROUTER).exactInputSingle{ value: msg.value }(params);
-}
-
-                                   
+    address public constant USDC = 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238;
+    address public constant WETH = 0xB4FBF271143F4FBf7B91A5ded31805e42b2208d6;
 
     /// @notice  событие индицирует получение ценовой информации от фида Chainlink
     /// @param  pairPrice полученное значение цены
@@ -63,16 +37,7 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
     /// @notice  событие индицирует добавление новой поддерживаемой пары в список пулов
     /// @param pair наименование пары
     event NewPoolAdded(bytes8 pair);
-
-    /// @notice ошибка указывает на недостаточность средств на контракте для проведения операции
-    /// @param needed требуемая сумма
-    /// @param balance располагаемая сумма
-    error InsufficientFunds (uint256 needed, uint256 balance);
     
-    /// @notice ошибка индицирует неуспешный вывод средств с контракта
-    /// @param amount сумма вывода
-    ///@param recipient адрес вывода
-    error MoneyTransferFailed(uint256 amount, address recipient);
     
     /// @notice адрес владельца
     address public owner;
@@ -112,11 +77,12 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
         chainlinkPriceFeeds[bytes8 ("ETHUSD")] = 0x694AA1769357215DE4FAC081bf1f309aDC325306;
         chainlinkPriceFeeds[bytes8 ("DAIUSD")] = 0x14866185B1962B63C3Ea9E03Bc1da838bab34C19;    
 
-        //начальные установки: добавим в справочник адреса токенов в Sepolia
+        //начальные установки: добавим в справочник адрес пула uniswap в Sepolia
         uniswapPools["USDCETH"] = 0x3289680dD4d6C10bb19b899729cda5eEF58AEfF1;
+
     }
 
-    
+    /*------------ CHAINLINK -----------------*/
     /// @notice функция возвращает цену анализируемой пары
     /// @param pair имя пары    
     function getPriceFromChainlink(bytes8 pair) public view returns (uint256) {
@@ -158,6 +124,70 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
         emit NewFeedAdded(pair);
     }
 
+    /*-------------- UNISWAP -----------------*/
+
+    /// @notice функция позволяет получить цену из заданного пула
+    /// @notice цена token0 относительно token1
+    function getPoolPrices(address pool) public view returns (
+        address token0,
+        address token1,
+        uint256 price0to1,
+        uint256 price1to0
+    ) {
+        token0 = IUniswapV3Pool(pool).token0();
+        token1 = IUniswapV3Pool(pool).token1();
+
+        // Хардкод для Sepolia USDC
+        uint8 decimals0 = token0 == 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238 ? 6 : IERC20Metadata(token0).decimals();
+        uint8 decimals1 = 18; // WETH всегда 18
+
+        (uint160 sqrtPriceX96, , , , , ,) = IUniswapV3Pool(pool).slot0();
+        
+        uint256 priceX192 = uint256(sqrtPriceX96) * uint256(sqrtPriceX96);
+        price0to1 = (priceX192 * 10**decimals1) >> (96 * 2);
+        price0to1 = price0to1 / (10**decimals0);
+
+        if (price0to1 == 0) {
+            price1to0 = 0;
+        } else {
+            price1to0 = (10**(decimals0 + decimals1)) / price0to1;
+        }
+    }
+    
+        
+
+    /// @notice функция произодит обмен эфров на UCDS
+    function swapExactETHForUSDC() external payable {
+        ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+            tokenIn: address(0), // ETH
+            tokenOut: USDC,
+            fee: 500, // 0.05%
+            recipient: msg.sender,
+            deadline: block.timestamp + 300,
+            amountIn: msg.value,
+            amountOutMinimum: 0,
+            sqrtPriceLimitX96: 0
+        });
+
+        ISwapRouter(SWAP_ROUTER).exactInputSingle{ value: msg.value }(params);
+    }
+
+    /// @notice параметризованная функция обмена
+    function simpleSwapTokens(address token0, address token1, uint24 _fee) external payable {
+        ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+            tokenIn: token0,
+            tokenOut: token1,
+            fee: _fee, // 0.05%
+            recipient: msg.sender,
+            deadline: block.timestamp + 300,
+            amountIn: msg.value,
+            amountOutMinimum: 0,
+            sqrtPriceLimitX96: 0
+        });
+
+        ISwapRouter(SWAP_ROUTER).exactInputSingle{ value: msg.value }(params);
+    }
+
     /// @notice функция позволяет расширить список используемых пар
     /// @param pair наимнеование пары (без пробелов и слэшей)
     /// @param poolAddress адрес фида из документации chainlink
@@ -166,7 +196,7 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
         uniswapPools[pair] = poolAddress;
         emit NewPoolAdded(pair);
     }
-    
+        
     //uint256 public priceThreshold;
 
     //event FlashloanExecuted(address asset, uint256 amount);

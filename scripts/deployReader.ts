@@ -1,12 +1,10 @@
 import fs from "fs";
 import path from "path";
 import hre, { ethers, run } from "hardhat";
-
-//деплой временного контракта проверки считывания цены юнисвап
 //скрипт для деплоя и верификации
 async function main() {
     
-    const contractName = process.env.CONTRACT || "FlashloanExecutor";
+    const contractName = process.env.CONTRACT || "PoolPriceReader";
     
      //деплой
     console.log("DEPLOYING...");
