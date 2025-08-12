@@ -19,6 +19,10 @@ const config: HardhatUserConfig = {
     hardhat: {
       chainId: 1337,
       initialBaseFeePerGas: 0,
+      forking: {
+        url: process.env.ALCHEMY_API_URL || "",
+        blockNumber: 8968967, // latest на 12.08.2025, зафиксировано для стабильности теста
+      }
     },
     sepolia: {
       url: process.env.ALCHEMY_API_URL || "",

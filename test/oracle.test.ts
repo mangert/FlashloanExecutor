@@ -1,6 +1,7 @@
 import { loadFixture, ethers, expect } from "./setup";
 import { toBytes8 } from"./test-helpers";
 
+//тесты используют контракт-заглушку. На форке не запускать - отвалятся, так как время блока ра
 describe("Chainlink Oracle", function() {
     async function deploy() {                
         const [user0, user1, user2] = await ethers.getSigners();
@@ -28,10 +29,10 @@ describe("Chainlink Oracle", function() {
         const executor = await Executor.deploy();
 
         // Подключаем пары        
-        await executor.addNewPair(toBytes8("VALID"), validFeed.getAddress());        
-        await executor.addNewPair(toBytes8("OLD"), outdatedFeed.getAddress());
-        await executor.addNewPair(toBytes8("NEG"), invalidFeed.getAddress());
-        await executor.addNewPair(toBytes8("ZERO"), zeroPriceFeed.getAddress());
+        await executor.addNewFeed(toBytes8("VALID"), validFeed.getAddress());        
+        await executor.addNewFeed(toBytes8("OLD"), outdatedFeed.getAddress());
+        await executor.addNewFeed(toBytes8("NEG"), invalidFeed.getAddress());
+        await executor.addNewFeed(toBytes8("ZERO"), zeroPriceFeed.getAddress());
 
         return {user0, user1, user2, executor, validFeed, outdatedFeed, invalidFeed, zeroPriceFeed}
 
@@ -42,7 +43,7 @@ describe("Chainlink Oracle", function() {
         const {user0, executor} 
             = await loadFixture(deploy);            
         //выбираем пару - фактически выбираем фид - валидный            
-        const price = await executor.connect(user0).getPriceFromChainlink(toBytes8("VALID"));
+        const price : bigint = await executor.connect(user0).getPriceFromChainlink(toBytes8("VALID"));
         expect(price).to.equal(1000n);
     });
     //проверим, что при получении устаревших данных вылетает ошибка        

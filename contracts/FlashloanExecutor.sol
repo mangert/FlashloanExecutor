@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import "./IExecutorErrors.sol"; //интерфейс для ошибок
 
 import { IERC20Metadata } from "@openzeppelin/contracts/interfaces/IERC20Metadata.sol";
+import { FullMath } from  "./libs/FullMath.sol";  // вместо "@uniswap/v3-core/contracts/libraries/FullMath.sol";
 /*
 import "@aave/core-v3/contracts/flashloan/base/FlashLoanSimpleReceiverBase.sol";
 import "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
@@ -113,10 +114,9 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
                 , OutdatedPriceData());
         return uint256(price);
     }
-
-    
+        
     /// @notice функция позволяет расширить список используемых пар
-    /// @param pair наимнеование пары (без пробелов и слэшей)
+    /// @param pair наименование пары (без пробелов и слэшей)
     /// @param feedAddress адрес фида из документации chainlink
         function addNewFeed(bytes8 pair, address feedAddress) onlyOwner() external {
         
@@ -127,33 +127,46 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
     /*-------------- UNISWAP -----------------*/
 
     /// @notice функция позволяет получить цену из заданного пула
+    /// @notice возвращает цены и адреса токенов и их параметр децималс
     /// @notice цена token0 относительно token1
-    function getPoolPrices(address pool) public view returns (
-        address token0,
-        address token1,
-        uint256 price0to1,
-        uint256 price1to0
-    ) {
+    /// @notice Получаем цену из пула, сразу в двух вариантах:
+    /// priceToken1perToken0 и priceToken0perToken1 (оба × 1e18)
+    function getPoolPrices(address pool)
+        public
+        view
+        returns (
+            uint256 price1per0_1e18,
+            uint256 price0per1_1e18,
+            address token0,
+            address token1,
+            uint8 dec0,
+            uint8 dec1
+        ) {
+        
+        //получаем из пула "сырую" цену (вызываем функцию пула uniswap)
+        (uint160 sqrtPriceX96,, , , , ,) = IUniswapV3Pool(pool).slot0();
+
+        // получаем адреса токенов из пула
         token0 = IUniswapV3Pool(pool).token0();
         token1 = IUniswapV3Pool(pool).token1();
 
-        // Хардкод для Sepolia USDC
-        uint8 decimals0 = token0 == 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238 ? 6 : IERC20Metadata(token0).decimals();
-        uint8 decimals1 = 18; // WETH всегда 18
+        // получаем decimals каждого токена для масшабирования цены
+        dec0 = _safeDecimals(token0);
+        dec1 = _safeDecimals(token1);
 
-        (uint160 sqrtPriceX96, , , , , ,) = IUniswapV3Pool(pool).slot0();
-        
-        uint256 priceX192 = uint256(sqrtPriceX96) * uint256(sqrtPriceX96);
-        price0to1 = (priceX192 * 10**decimals1) >> (96 * 2);
-        price0to1 = price0to1 / (10**decimals0);
+        //переводим "сырую" цену в нормальный вид через формулу цены пула
+        //используем безопасное умножение из библиотеки uniswap, чтобы избежать переполнения
+        uint256 priceRaw = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), 1 << 192);
 
-        if (price0to1 == 0) {
-            price1to0 = 0;
-        } else {
-            price1to0 = (10**(decimals0 + decimals1)) / price0to1;
-        }
+        //масшабируем цены к 10^18 токенов
+        // price(token1/token0) с учётом decimals
+        int256 exp1per0 = int256(18) + int256(uint256(dec0)) - int256(uint256(dec1));
+        price1per0_1e18 = _scalePrice(priceRaw, exp1per0);
+
+        // price(token0/token1) = 1 / price(token1/token0)
+        int256 exp0per1 = int256(18) + int256(uint256(dec1)) - int256(uint256(dec0));
+        price0per1_1e18 = _scalePrice(FullMath.mulDiv(1e36, 1, price1per0_1e18), 0);
     }
-    
         
 
     /// @notice функция произодит обмен эфров на UCDS
@@ -190,13 +203,15 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
 
     /// @notice функция позволяет расширить список используемых пар
     /// @param pair наимнеование пары (без пробелов и слэшей)
-    /// @param poolAddress адрес фида из документации chainlink
+    /// @param poolAddress адрес пула Uniswap
         function addNewPool(bytes8 pair, address poolAddress) onlyOwner() external {
         
         uniswapPools[pair] = poolAddress;
         emit NewPoolAdded(pair);
     }
         
+    /*-------------- AAVE -----------------*/
+    
     //uint256 public priceThreshold;
 
     //event FlashloanExecuted(address asset, uint256 amount);
@@ -255,6 +270,8 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
     }*/
 
    
+    /*-------------- Функци для владельца -----------------*/
+   
     /// @notice функция позволяет вывести средства с контракта
     /// @param amount сумма вывода
     /// @param recipient адрес вывода    
@@ -263,6 +280,26 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
         require(amount <= address(this).balance, InsufficientFunds (amount, address(this).balance));
 
         (bool success, ) = recipient.call{value: amount}("");
-        require(!success, MoneyTransferFailed(amount, recipient));
+        require(success, MoneyTransferFailed(amount, recipient));
     }
+
+    /*-------------- Служебные функции -----------------*/
+    
+    /// @notice служебная функция, позволяющая безопасно определить параметр decimals токена по его адресу    
+    /// @dev используется в запросах цен из пулов Uniswap
+    function _safeDecimals(address token) internal view returns (uint8) {
+        try IERC20Metadata(token).decimals() returns (uint8 d) {
+            return d;
+        } catch {
+            return 18;
+        }
+    }
+    /// @notice служебная функция, применяющая поправочный множитель, чтобы цена была в формате × 1e18
+    function _scalePrice(uint256 priceRaw, int256 exp) internal pure returns (uint256) {
+        if (exp >= 0) {
+            return priceRaw * (10 ** uint256(exp));
+        } else {
+            return priceRaw / (10 ** uint256(-exp));
+        }
+    }    
 }
