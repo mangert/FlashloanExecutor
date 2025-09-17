@@ -1,25 +1,51 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import "./IExecutorErrors.sol"; //интерфейс для ошибок
+import "./interfaces/IExecutorErrors.sol"; //интерфейс для ошибок
+import "./interfaces/IWETH9.sol"; //интерфейс для работы с обернутым эфиром;
 
 import { IERC20Metadata } from "@openzeppelin/contracts/interfaces/IERC20Metadata.sol";
+import { IERC20 } from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import { FullMath } from  "./libs/FullMath.sol";  // вместо "@uniswap/v3-core/contracts/libraries/FullMath.sol";
+import { TickMath } from  "./libs/TickMath.sol";  // вместо "@uniswap/v3-core/contracts/libraries/TickMath.sol.sol";
+//import { TransferHelper } from  "./libs/TransferHelper.sol";  //
+
 /*
 import "@aave/core-v3/contracts/flashloan/base/FlashLoanSimpleReceiverBase.sol";
 import "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
 import "@aave/core-v3/contracts/interfaces/IPool.sol";*/
 import { AggregatorV3Interface } from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import { IUniswapV3Pool } from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
-import { ISwapRouter } from "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
+import '@uniswap/v3-periphery/contracts/libraries/TransferHelper.sol';
+//import "@uniswap/v3-core/contracts/libraries/TickMath.sol";
+import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+
+
+import "./interfaces/ICustomSwapRouter.sol"; //используем вместо @uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol
+
+
+interface IUniswapV3SwapCallback {
+    function uniswapV3SwapCallback(
+        int256 amount0Delta,
+        int256 amount1Delta,
+        bytes calldata data
+    ) external;
+}
+
 
 
 /// @notice демонстрационный контракт
 contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*/
     
-    address public constant SWAP_ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
+    // источник:
+    // https://docs.uniswap.org/contracts/v3/reference/deployments/ethereum-deployments?utm_source=chatgpt.com    
+    address public constant SWAP_ROUTER = 0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E; 
+
     address public constant USDC = 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238;
-    address public constant WETH = 0xB4FBF271143F4FBf7B91A5ded31805e42b2208d6;
+    //address public constant WETH = 0xB4FBF271143F4FBf7B91A5ded31805e42b2208d6;        
+    
+    //address public constant WETH9 = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address public constant WETH9 = 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14; //поправила    
 
     /// @notice  событие индицирует получение ценовой информации от фида Chainlink
     /// @param  pairPrice полученное значение цены
@@ -30,6 +56,9 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
     /// @param  value сумма вывода
     /// @param  recipient адрес вывода
     event FundsWithdrawn(uint256 value, address indexed recipient);    
+    
+    //отладочное
+    event SwapDebug(string, uint256 amountOut);
 
     /// @notice  событие индицирует добавление новой поддерживаемой пары в список фидов
     /// @param pair наименование пары
@@ -79,8 +108,7 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
         chainlinkPriceFeeds[bytes8 ("DAIUSD")] = 0x14866185B1962B63C3Ea9E03Bc1da838bab34C19;    
 
         //начальные установки: добавим в справочник адрес пула uniswap в Sepolia
-        uniswapPools["USDCETH"] = 0x3289680dD4d6C10bb19b899729cda5eEF58AEfF1;
-
+        uniswapPools["USDCETH"] = 0x3289680dD4d6C10bb19b899729cda5eEF58AEfF1;               
     }
 
     /*------------ CHAINLINK -----------------*/
@@ -145,7 +173,6 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
         
         //получаем из пула "сырую" цену (вызываем функцию пула uniswap)
         (uint160 sqrtPriceX96,, , , , ,) = IUniswapV3Pool(pool).slot0();
-
         // получаем адреса токенов из пула
         token0 = IUniswapV3Pool(pool).token0();
         token1 = IUniswapV3Pool(pool).token1();
@@ -166,43 +193,198 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
         // price(token0/token1) = 1 / price(token1/token0)
         int256 exp0per1 = int256(18) + int256(uint256(dec1)) - int256(uint256(dec0));
         price0per1_1e18 = _scalePrice(FullMath.mulDiv(1e36, 1, price1per0_1e18), 0);
-    }
-        
+   }        
 
-    /// @notice функция произодит обмен эфров на UCDS
-    function swapExactETHForUSDC() external payable {
-        ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
-            tokenIn: address(0), // ETH
+
+    // Модифицированная функция
+    function swapExactETHForUSDC(uint256 amountOutMin) external payable {
+        require(msg.value > 0, "No ETH sent");
+        emit SwapDebug("ETH received", msg.value);       
+    
+        // Конвертируем ETH в WETH
+        IWETH9(WETH9).deposit{value: msg.value}();
+        uint256 wethBalance = IWETH9(WETH9).balanceOf(address(this));
+    
+        // Переводим WETH на роутер
+        TransferHelper.safeTransfer(WETH9, SWAP_ROUTER, wethBalance);
+        emit SwapDebug("WETH transferred via TransferHelper", wethBalance);
+        // Используем TransferHelper.safeApprove вместо стандартного approve
+        TransferHelper.safeApprove(WETH9, SWAP_ROUTER, wethBalance);
+        emit SwapDebug("WETH approved via TransferHelper", wethBalance);
+
+        // Формируем параметры для exactInputSingle
+        ICustomSwapRouter.ExactInputSingleParams memory params = ICustomSwapRouter.ExactInputSingleParams({
+            tokenIn: WETH9,
             tokenOut: USDC,
-            fee: 500, // 0.05%
+            fee: 500,
             recipient: msg.sender,
-            deadline: block.timestamp + 300,
-            amountIn: msg.value,
-            amountOutMinimum: 0,
+            amountIn: wethBalance,
+            amountOutMinimum: amountOutMin,
             sqrtPriceLimitX96: 0
         });
 
-        ISwapRouter(SWAP_ROUTER).exactInputSingle{ value: msg.value }(params);
+        try ICustomSwapRouter(SWAP_ROUTER).exactInputSingle(params) returns (uint256 amountOut) {
+            emit SwapDebug("Swap executed, amountOut", amountOut);
+        } catch Error(string memory reason) {
+            emit SwapDebug("Swap failed with reason", 0);
+            emit SwapDebug(reason, 0);
+        } catch (bytes memory lowLevelData) {
+            emit SwapDebug("Swap failed with low level data", 0);
+            if (lowLevelData.length > 0) {
+                // Пытаемся декодировать ошибку
+                if (lowLevelData.length < 68) {
+                    emit SwapDebug("Low level error (short)", 0);
+                } else {
+                    string memory errorMessage = abi.decode(lowLevelData, (string));
+                    emit SwapDebug(errorMessage, 0);
+                }
+            }
+        }
     }
 
-    /// @notice параметризованная функция обмена
-    function simpleSwapTokens(address token0, address token1, uint24 _fee) external payable {
+    function swapExactUSDCForETH(uint256 amountIn) external returns (uint256 amountOut) {
+        // msg.sender must approve this contract
+
+        // Transfer the specified amount of DAI to this contract.
+        TransferHelper.safeTransferFrom(USDC, msg.sender, address(this), amountIn);
+
+        // Approve the router to spend DAI.
+        TransferHelper.safeApprove(USDC, SWAP_ROUTER, amountIn);
+
+        // Naively set amountOutMinimum to 0. In production, use an oracle or other data source to choose a safer value for amountOutMinimum.
+        // We also set the sqrtPriceLimitx96 to be 0 to ensure we swap our exact input amount.
+        ICustomSwapRouter.ExactInputSingleParams memory params =
+            ICustomSwapRouter.ExactInputSingleParams({
+                tokenIn: USDC,
+                tokenOut: WETH9,
+                fee: 500,
+                recipient: msg.sender,                
+                amountIn: amountIn,
+                amountOutMinimum: 0,
+                sqrtPriceLimitX96: 0
+            });
+
+        // The call to `exactInputSingle` executes the swap.
+        amountOut = ICustomSwapRouter(SWAP_ROUTER).exactInputSingle(params);
+    }
+
+    function uniswapV3SwapCallback(
+        int256 amount0Delta,
+        int256 amount1Delta,
+        bytes calldata data
+    ) external {
+        // Проверяем, что вызов пришел от доверенного пула
+        address expectedPool = uniswapPools["USDCETH"];
+        require(msg.sender == expectedPool, "Invalid callback caller");
+        
+        // Декодируем данные, переданные при вызове swap
+        (address tokenIn, address tokenOut, uint24 fee) = abi.decode(data, (address, address, uint24));
+        
+        // Определяем, сколько токенов мы должны отправить в пул
+        uint256 amountToPay = amount0Delta > 0 ? uint256(amount0Delta) : uint256(amount1Delta);
+        
+        // Отправляем токены в пул
+        TransferHelper.safeTransfer(tokenIn, msg.sender, amountToPay);
+    }
+
+    // Прямое обращение к пулу
+    function swapDirectInPool(uint256 amountOutMin) external payable {
+        require(msg.value > 0, "No ETH sent");
+        
+        // Конвертируем ETH в WETH
+        IWETH9(WETH9).deposit{value: msg.value}();
+        uint256 wethBalance = IWETH9(WETH9).balanceOf(address(this));
+        
+        // Получаем адрес пула
+        address poolAddress = uniswapPools["USDCETH"];
+        IUniswapV3Pool pool = IUniswapV3Pool(poolAddress);
+        
+        // Определяем направление обмена
+        (address token0, address token1) = (pool.token0(), pool.token1());
+        bool zeroForOne = (WETH9 == token0);
+        
+        // Параметры для вызова swap
+        int256 amountSpecified = int256(wethBalance);
+        uint160 sqrtPriceLimitX96 = zeroForOne 
+            ? TickMath.MIN_SQRT_RATIO + 1 
+            : TickMath.MAX_SQRT_RATIO - 1;
+        
+        // Вызываем swap с передачей данных для callback
+        (int256 amount0, int256 amount1) = pool.swap(
+            msg.sender, // recipient
+            zeroForOne,
+            amountSpecified,
+            sqrtPriceLimitX96,
+            abi.encode(WETH9, USDC, pool.fee()) // данные для callback
+        );
+        
+        // Проверяем результат
+        uint256 amountOut = zeroForOne ? uint256(-amount1) : uint256(-amount0);
+        require(amountOut >= amountOutMin, "Insufficient output amount");
+        emit SwapDebug("Direct swap executed, amountOut", amountOut);
+    }
+    /*
+    /// @notice функция произодит обмен эфров на UCDS
+    function swapExactETHForToken(
+        address tokenOut,
+        uint24 fee,
+        uint256 amountOutMinimum
+    ) external payable {
+        require(msg.value > 0, "No ETH sent");
+
+        // 1. Оборачиваем ETH в WETH
+        IWETH9(WETH).deposit{value: msg.value}();
+
+        // 2. Апрувим роутер на использование WETH
+        IWETH9(WETH).approve(SWAP_ROUTER, msg.value);
+
+        // 3. Формируем параметры свапа
         ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
-            tokenIn: token0,
-            tokenOut: token1,
-            fee: _fee, // 0.05%
+            tokenIn: WETH,
+            tokenOut: tokenOut,
+            fee: fee,
             recipient: msg.sender,
             deadline: block.timestamp + 300,
             amountIn: msg.value,
-            amountOutMinimum: 0,
+            amountOutMinimum: amountOutMinimum,
             sqrtPriceLimitX96: 0
         });
 
-        ISwapRouter(SWAP_ROUTER).exactInputSingle{ value: msg.value }(params);
+        // 4. Запускаем свап
+        ISwapRouter(SWAP_ROUTER).exactInputSingle(params);
+    }*/
+/*
+    function swapExactTokenForETH(
+        address tokenIn,
+        uint24 fee,
+        uint256 amountIn,
+        uint256 amountOutMin
+    ) external {
+        IERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn);
+        IERC20(tokenIn).approve(SWAP_ROUTER, amountIn);
+
+        ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+            tokenIn: tokenIn,
+            tokenOut: WETH,
+            fee: fee,
+            recipient: address(this), // сначала в контракт
+            deadline: block.timestamp + 300,
+            amountIn: amountIn,
+            amountOutMinimum: amountOutMin,
+            sqrtPriceLimitX96: 0
+        });
+
+        uint256 wethReceived = ISwapRouter(SWAP_ROUTER).exactInputSingle(params);
+
+        // разворачиваем в ETH и отправляем юзеру
+        IWETH9(WETH).withdraw(wethReceived);
+        payable(msg.sender).transfer(wethReceived);
     }
+
+*/
 
     /// @notice функция позволяет расширить список используемых пар
-    /// @param pair наимнеование пары (без пробелов и слэшей)
+    /// @param pair наименование пары (без пробелов и слэшей)
     /// @param poolAddress адрес пула Uniswap
         function addNewPool(bytes8 pair, address poolAddress) onlyOwner() external {
         
@@ -270,7 +452,7 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
     }*/
 
    
-    /*-------------- Функци для владельца -----------------*/
+    /*-------------- Функции для владельца -----------------*/
    
     /// @notice функция позволяет вывести средства с контракта
     /// @param amount сумма вывода
@@ -301,5 +483,9 @@ contract FlashloanExecutor is IExecutorErrors { /*FlashLoanSimpleReceiverBase {*
         } else {
             return priceRaw / (10 ** uint256(-exp));
         }
-    }    
+    }
+
+    ///@notice чтобы рефанды не отваливались
+    receive() payable external {
+    }
 }

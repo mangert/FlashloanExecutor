@@ -4,12 +4,10 @@ pragma solidity ^0.8.30;
 
 /// @title интерфейс для описания ошибок, выбрасываемых контрактом FlashloansExecutor  
 interface IExecutorErrors {
-
     
     /// @notice ошибка индицирует попытку вызова защищенных функций не владельцем
     /// @param account адрес аккаунта, пытавшегося вызвать функцию    
-    error NotAnOwner(address account);
-     
+    error NotAnOwner(address account);     
     
     /// @notice ошибка индицирует попытку использования неподдерживаемой пары
     /// @param pair идентификатор запрашиваемой пары    
@@ -18,7 +16,6 @@ interface IExecutorErrors {
     /// @notice ошибка индицирует попытку обращения к фиду по адресу, не являщемуся адресом контракта
     /// @param pair идентификатор запрашиваемой пары
     error FeedIsNotContract(bytes8 pair);
-
     
     /// @notice ошибка при получении цены с chainlink - получено отрицательное значение         
     error InvalidPriceReceipt();
@@ -35,6 +32,5 @@ interface IExecutorErrors {
     /// @param amount сумма вывода
     ///@param recipient адрес вывода
     error MoneyTransferFailed(uint256 amount, address recipient);
-
     
 }
