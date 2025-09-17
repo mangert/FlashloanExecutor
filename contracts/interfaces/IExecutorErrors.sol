@@ -30,7 +30,43 @@ interface IExecutorErrors {
     
     /// @notice ошибка индицирует неуспешный вывод средств с контракта
     /// @param amount сумма вывода
-    ///@param recipient адрес вывода
+    /// @param recipient адрес вывода
     error MoneyTransferFailed(uint256 amount, address recipient);
+    
+    
+    /// @notice ошибка индицирует вызов колбэка неуполномоченным контрактом
+    /// @param caller адрес инициатора вызова колбэка
+    error InvalidCallbackCaller(address caller);
+
+    /// @notice ошибка индицирует отсутствие эфиров, направленных для обмена
+    error NoETHsentToSwap();
+
+    /// @notice ошибка индицирует нулевую сумму, направленную на обмен
+    error ZeroAmountSwap();
+
+    /// @notice ошибка индицирует обращение к неподдерживаемому пулу
+    error PoolNotFound(address pool, bytes8 pair);
+
+    /// @notice ошибка индицирует несоответствие пары токенов содержанию пула
+    /// @param token0 адрес входящего токена
+    /// @param token1 адрес запрашиваемого токена
+    /// @param pool адрес вызываемого пула
+    error InvalidTokenPairForPool(address token0, address token1, address pool);
+
+    /// @notice ошибка индицирует отказ в обмене в связи с невозможность получить минимальную сумму обмена
+    /// @param amountOut нижний порог обмена
+    /// @param amountOutMin минимальный порог получения запрошенного токена
+    error InsufficientOutputAmount(uint256 amountOut, uint256 amountOutMin);
+
+    /// @notice ошибка индицирует неудачный трансфер эфиров в процессе свопа
+    /// @param recipient адрес получателя
+    /// @param amount сумма неудачного трансфера
+    error SwapTranserFailed(address recipient, uint256 amount);
+
+    /// @notice ошибка индицирует отказ в обмене в связи с недостаточностью баланса токенов
+    error InsufficientBalanceCallback();
+
+    /// @notice ошибка индицирует превышение суммы разрешенных контракту токенов
+    error InsufficientAllowance();
     
 }
