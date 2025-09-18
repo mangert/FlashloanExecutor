@@ -68,5 +68,8 @@ interface IExecutorErrors {
 
     /// @notice ошибка индицирует превышение суммы разрешенных контракту токенов
     error InsufficientAllowance();
+
+    /// @notice ошибка индицирует недостаточность баланса USDC пользователя для выполнения перевода
+    error InsufficientUSDCBalance();
     
 }

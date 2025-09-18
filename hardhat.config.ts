@@ -21,7 +21,7 @@ const config: HardhatUserConfig = {
       initialBaseFeePerGas: 0,
       forking: {
         url: process.env.ALCHEMY_API_URL || "",
-        blockNumber: 8968967, // latest на 12.08.2025, зафиксировано для стабильности теста
+        blockNumber: 9230783, // latest на 18.09.2025, зафиксировано для стабильности теста
       }
     },
     sepolia: {

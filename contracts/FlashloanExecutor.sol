@@ -19,7 +19,6 @@ import { IUniswapV3Pool } from "@uniswap/v3-core/contracts/interfaces/IUniswapV3
 import { TransferHelper } from '@uniswap/v3-periphery/contracts/libraries/TransferHelper.sol';
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-
 //import "./interfaces/ICustomSwapRouter.sol"; //используем вместо @uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol
 
 /// @notice демонстрационный контракт
@@ -228,7 +227,9 @@ contract FlashloanExecutor is
     /// @param amountIn входящая сумма USDC
     /// @param amountOutMin минимальный порог получения ETH
     function swapUSDCToETH(uint256 amountIn, uint256 amountOutMin) external {
+        
         require(amountIn > 0, ZeroAmountSwap());        
+        require(amountIn <= IERC20(USDC).balanceOf(msg.sender), InsufficientUSDCBalance());
 
         uint256 allowance = IERC20(USDC).allowance(msg.sender, address(this));
         require(allowance >= amountIn, InsufficientAllowance());
@@ -273,18 +274,7 @@ contract FlashloanExecutor is
         approvedPools[poolAddress] = true;
         emit NewPoolAdded(pair);
 
-    }
-
-    /// @notice функция дает разрешение контракту на перевод токенов
-    /// @param amount сумма разрешения
-    function checkAndApproveUSDC(uint256 amount) external {
-        uint256 currentAllowance = IERC20(USDC).allowance(msg.sender, address(this));
-        
-        if (currentAllowance < amount) {
-            // Используем безопасный approve через TransferHelper
-            TransferHelper.safeApprove(USDC, address(this), amount);
-        }
-    }
+    } 
 
         
     /*-------------- AAVE -----------------*/
@@ -394,12 +384,10 @@ contract FlashloanExecutor is
         bytes calldata data
     ) external override {
         // Проверяем, что вызов пришел от доверенного пула        
-        _validatePool(msg.sender);
-        
+        _validatePool(msg.sender);        
 
         // Декодируем данные, переданные при вызове swap
-        (address tokenIn, address tokenOut, uint24 fee) = abi.decode(data, (address, address, uint24));        
-    
+        (address tokenIn, address tokenOut, uint24 fee) = abi.decode(data, (address, address, uint24));            
         
         // Определяем, сколько токенов мы должны отправить в пул
         uint256 amountToPay = amount0Delta > 0 ? uint256(amount0Delta) : uint256(amount1Delta);
