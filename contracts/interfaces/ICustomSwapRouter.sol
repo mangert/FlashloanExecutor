@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-/// @title Интерфей кастомного swap-роутера для Sepolia
+/// @title Интерфейс кастомного swap-роутера для Sepolia
 /// @notice нужен чтобы обойти несоответствие параметров роутера в Sepolia
 interface ICustomSwapRouter {
     

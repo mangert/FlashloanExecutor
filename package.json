@@ -5,6 +5,8 @@
     "hardhat": "^2.26.1"
   },
   "dependencies": {
+    "@aave/core-v3": "github:aave/aave-v3-core#v1.17.1",
+    "@aave/periphery-v3": "github:aave/aave-v3-periphery",
     "@chainlink/contracts": "^1.4.0",
     "@ethersproject/contracts": "^5.8.0",
     "@ethersproject/providers": "^5.8.0",

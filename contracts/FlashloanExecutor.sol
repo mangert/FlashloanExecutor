@@ -10,31 +10,43 @@ import { FullMath } from  "./libs/FullMath.sol";  // вместо "@uniswap/v3-c
 import { TickMath } from  "./libs/TickMath.sol";  // вместо "@uniswap/v3-core/contracts/libraries/TickMath.sol.sol";
 import { IUniswapV3SwapCallback } from "./interfaces/IUniswapV3SwapCallback.sol";
 
-/*
-import "@aave/core-v3/contracts/flashloan/base/FlashLoanSimpleReceiverBase.sol";
-import "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
-import "@aave/core-v3/contracts/interfaces/IPool.sol";*/
+
+import { FlashLoanSimpleReceiverBase } from "./aave/flashloan/base/FlashLoanSimpleReceiverBase.sol"; //вместо "@aave/core-v3...
+import {IPoolAddressesProvider} from "./aave/interfaces/IPoolAddressesProvider.sol"; //вместо @aave/core-v3...
+import { IPool } from "./aave/interfaces/IPool.sol"; //вместо "@aave/core-v3/contracts/interfaces/IPool.sol";
+
 import { AggregatorV3Interface } from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import { IUniswapV3Pool } from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import { TransferHelper } from '@uniswap/v3-periphery/contracts/libraries/TransferHelper.sol';
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-//import "./interfaces/ICustomSwapRouter.sol"; //используем вместо @uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol
-
 /// @notice демонстрационный контракт
 contract FlashloanExecutor is 
     IExecutorErrors, 
-    IUniswapV3SwapCallback { /*FlashLoanSimpleReceiverBase {*/
+    IUniswapV3SwapCallback,
+    FlashLoanSimpleReceiverBase {
     
+    //адреса для Uniswap
     // источник:
     // https://docs.uniswap.org/contracts/v3/reference/deployments/ethereum-deployments?utm_source=chatgpt.com    
     address public constant SWAP_ROUTER = 0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E; 
 
-    address public constant USDC = 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238;
-    //address public constant WETH = 0xB4FBF271143F4FBf7B91A5ded31805e42b2208d6;        
+    address public constant USDC = 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238; // USDC в Uniswap Sepolia    
     
-    //address public constant WETH9 = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
-    address public constant WETH9 = 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14; //поправила    
+    address public constant WETH9 = 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14; 
+
+    //константы для AAVE
+    address public constant AAVE_POOL_ADDRESSES_PROVIDER = 0x012bAC54348C0E635dCAc9D5FB99f06F24136C9A;
+    address public constant AAVE_USDC = 0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8; // USDC в AAVE Sepolia                                        
+    
+    IPool public immutable aavePool;
+
+    address public constant DAI = 0xFF34B3d4Aee8ddCd6F9AFFFB6Fe49bD371b8a357;
+
+    uint8 public constant DAI_DECIMALS = 18;
+    uint8 public constant USDC_DECIMALS = 6;
+    uint8 public constant CHAINLINK_PRICE_DECIMALS = 8;
+
 
     /// @notice  событие индицирует получение ценовой информации от фида Chainlink
     /// @param  pairPrice полученное значение цены
@@ -46,8 +58,11 @@ contract FlashloanExecutor is
     /// @param  recipient адрес вывода
     event FundsWithdrawn(uint256 value, address indexed recipient);    
     
-    //отладочное
-    event SwapDebug(string, uint256 amountOut);
+    /// @notice событие индицирует получение flashloan на aave
+    /// @param  asset адрес взятого актива
+    /// @param  amount сумма займа
+    /// @param  premium комиссия
+    event FlashLoanExecuted(address indexed asset, uint256 amount, uint256 premium);
 
     /// @notice  событие индицирует добавление новой поддерживаемой пары в список фидов
     /// @param pair наименование пары
@@ -62,7 +77,26 @@ contract FlashloanExecutor is
     /// @param amountIn входящая сумма
     /// @param tokenOut адрес исходящего токена
     /// @param amountOut полученная сумма
-    event TokensSwapped(address tokenIn, uint256 amountIn, address tokenOut, uint256 amountOut);
+    event TokensSwapped(address tokenIn, uint256 amountIn, address tokenOut, uint256 amountOut);                  
+
+    /// @notice событие индицирует пополнение контракта
+    /// @param token адрес токена пополнения
+    /// @param amount сумма пополнения
+    /// @param depositor адрес, пополнивший контракт
+    event FundsDeposited(address indexed token, uint256 amount, address indexed depositor);
+    
+    /// @notice событие индицирует вывод токенов с контракта
+    /// @param token адрес выведенного токена
+    /// @param amount сумма вывода
+    /// @param recipient адрес вывода
+    event FundsWithdrawn(address indexed token, uint256 amount, address indexed recipient);
+
+    /// @notice событие индицирует фэйковый обмен токенов
+    /// @param tokenIn адрес входящего токена
+    /// @param amountIn входящая сумма
+    /// @param tokenOut адрес исходящего токена
+    /// @param amountOut полученная сумма
+    event FakeTokensSwapped(address tokenIn, uint256 amountIn, address tokenOut, uint256 amountOut); 
     
     
     /// @notice адрес владельца
@@ -97,17 +131,23 @@ contract FlashloanExecutor is
         _;
     }
     
-    constructor() {
+    constructor() 
+        FlashLoanSimpleReceiverBase(IPoolAddressesProvider(AAVE_POOL_ADDRESSES_PROVIDER)) {
         
         owner = msg.sender;        
+        //для chainlink
         //начальные установки: добавим в справочник фиды Chainlink для двух пар 
         //потом можно будет добавлять через функцию
         chainlinkPriceFeeds[bytes8 ("ETHUSD")] = 0x694AA1769357215DE4FAC081bf1f309aDC325306;
         chainlinkPriceFeeds[bytes8 ("DAIUSD")] = 0x14866185B1962B63C3Ea9E03Bc1da838bab34C19;    
 
+        //для uniswap
         //начальные установки: добавим в справочник адрес пула uniswap в Sepolia
         uniswapPools["USDCETH"] = 0x3289680dD4d6C10bb19b899729cda5eEF58AEfF1;   
         approvedPools[0x3289680dD4d6C10bb19b899729cda5eEF58AEfF1] = true;
+
+        //инициализируем пул на aave
+        aavePool = IPool(IPoolAddressesProvider(AAVE_POOL_ADDRESSES_PROVIDER).getPool());
     }
 
     ///@notice чтобы контракт мог принимать средства вне функций
@@ -195,7 +235,7 @@ contract FlashloanExecutor is
         // price(token0/token1) = 1 / price(token1/token0)
         int256 exp0per1 = int256(18) + int256(uint256(dec1)) - int256(uint256(dec0));
         price0per1_1e18 = _scalePrice(FullMath.mulDiv(1e36, 1, price1per0_1e18), 0);
-   }           
+    }           
     
     /// @notice функция позволяет обменивать ETH на токены USDT
     /// @param amountOutMin минимальный порог получения USDC
@@ -273,43 +313,35 @@ contract FlashloanExecutor is
         uniswapPools[pair] = poolAddress;
         approvedPools[poolAddress] = true;
         emit NewPoolAdded(pair);
-
     } 
-
         
-    /*-------------- AAVE -----------------*/
+   /*-------------- AAVE -----------------*/
     
-    //uint256 public priceThreshold;
+   /// @notice функция запроса флэшзайма
+   /// @param token адрес токена, в котором будем брать займы (для целей демонстрации будем брать займы только в DAI)
+   /// @param amount сумма займа
+   /// @dev так как контракт демонстрационный и работа будет без прибыли, необходимо заранее пополнить контракт DAI на оплату комиссии
+   function requestFlashLoan(address token, uint256 amount) public {
+        
+        // формируем параметры
+        address receiverAddress = address(this);
+        address asset = token; 
+        uint256 amount = amount;
+        bytes memory params = "";
+        uint16 referralCode = 0;
 
-    //event FlashloanExecuted(address asset, uint256 amount);
-    /*
-    constructor(
-        address _addressProvider,
-        address _priceFeed,
-        uint256 _threshold
-    ) FlashLoanSimpleReceiverBase(IPoolAddressesProvider(_addressProvider)) {
-        priceFeed = AggregatorV3Interface(_priceFeed);
-        owner = msg.sender;
-        priceThreshold = _threshold;
-    }*/
-
-    /*
-    function executeIfProfitable(address asset, uint256 amount) external onlyOwner {
-        uint256 price = getPriceFromChainlink();
-        emit OracleChecked(price);
-
-        require(price > priceThreshold, "Price condition not met");
-
-        POOL.flashLoanSimple(
-            address(this),
+        // запрашиваем займ
+        aavePool.flashLoanSimple(
+            receiverAddress,
             asset,
             amount,
-            bytes(""), // можно зашить параметры
-            0
+            params,
+            referralCode
         );
-    }
-
-    /// Callback, вызываемый Aave после выдачи флэшлона
+    }             
+    
+    /// @notice функция осуществляет операции с полученным займом и возвращает займ
+    /// @notice вызывается пулом AAVE после выдачи займа  
     function executeOperation(
         address asset,
         uint256 amount,
@@ -317,38 +349,116 @@ contract FlashloanExecutor is
         address initiator,
         bytes calldata params
     ) external override returns (bool) {
-        require(msg.sender == address(POOL), "Untrusted lender");
-        require(initiator == address(this), "Untrusted initiator");
+        // будем брать займы только в DAI, считаем, что такая у нас стратегия
+        require(asset == DAI, NotSupportedAsset(asset));
+        //проверяем, что функцию запустил кто нужно (то есть пул AAVE)
+        require(msg.sender == address(aavePool), UnauthorizedExecution());
+        // и с правильным параметром
+        require(initiator == address(this), InvalidExecutionInitiator());       
+        
+        // Делаем обмен демонстрационные обмены через функцию-заглушку
+        uint256 amountOut = demoSwapDAIUCDC(DAI, amount, AAVE_USDC);
+        // а теперь обратно
+        demoSwapDAIUCDC(AAVE_USDC, amountOut, DAI);
 
-        // TODO: Здесь должен быть swap на DEX (Uniswap или 1inch)
-        // Например: обмен части `amount` на другой токен, вывод прибыли
-
-        emit FlashloanExecuted(asset, amount);
-
-        // Возвращаем долг
+        // Возвращаем средства
         uint256 amountOwing = amount + premium;
-        IERC20(asset).approve(address(POOL), amountOwing);
+        IERC20(asset).approve(address(aavePool), amountOwing);
+        
+        emit FlashLoanExecuted(asset, amount, premium);
         return true;
+    }    
+
+    /*-------------- Вспомогательные функции  -----------------*/
+
+    /// @notice функция-заглушка, позволяющая имитировать арбитражный обмен
+    /// @notice ничего не делает, только имитирует
+    /// @notice используется только в экзекьюторе AAVE
+    /// @param tokenIn адрес входящего токен (только DAI или USDC)
+    /// @param amountIn сумма для обмена
+    /// @param tokenOut адрес исходящего токена (только USDC или DAI)   
+    function demoSwapDAIUCDC(address tokenIn, uint256 amountIn, address tokenOut) internal returns(uint256 amountOut){               
+        
+        require(tokenIn == DAI || tokenIn == AAVE_USDC, NotSupportedAsset(tokenIn));
+        require(tokenOut == DAI || tokenOut == AAVE_USDC, NotSupportedAsset(tokenOut));            
+        
+        // Здесь должен бы быть реальный обмен, но мы просто получим цену с chainlink и выбросим событие
+        // потому что в сеполии адреса токенов в пулах юнисвап 
+        // не совпадают с теми, что использует AAVE.        
+        uint256 price = getPriceFromChainlink(bytes8("DAIUSD"));
+    
+        uint256 daiFactor = 10 ** DAI_DECIMALS;
+        uint256 usdcFactor = 10 ** USDC_DECIMALS;
+        uint256 chainlinkFactor = 10 ** CHAINLINK_PRICE_DECIMALS;
+        
+        if (tokenIn == DAI) {
+            // DAI to USDC: amountOut = (amountIn * price * usdcFactor) / (daiFactor * chainlinkFactor)
+            amountOut = FullMath.mulDiv(
+                FullMath.mulDiv(amountIn, price, daiFactor),
+                usdcFactor,
+                chainlinkFactor
+            );
+        } else {
+            // USDC to DAI: amountOut = (amountIn * daiFactor * chainlinkFactor) / (price * usdcFactor)
+            amountOut = FullMath.mulDiv(
+                FullMath.mulDiv(amountIn, daiFactor, price),
+                chainlinkFactor,
+                usdcFactor
+            );
+        }    
+                
+        emit FakeTokensSwapped(tokenIn, amountIn, tokenOut, amountOut);               
     }
 
-    // Управление
-    function setThreshold(uint256 newThreshold) external onlyOwner {
-        priceThreshold = newThreshold;
-    }*/
+    /// @notice функция пополнения контракта
+    /// @param token адрес токена пополнения
+    /// @param amount сумма пополнения
+    /// @dev для ERC-токенов нужен предварительный апрув
+    function deposit(address token, uint256 amount) external payable {
+        if (token == address(0)) {
+            // Для ETH
+            require(msg.value == amount && amount > 0, IncorrectDepositAmount());
+            emit FundsDeposited(address(0), amount, msg.sender);
+        } else {
+            // Для ERC20 токенов 
+            require(msg.value == 0 && amount > 0, IncorrectDepositAmount());           
+            IERC20(token).transferFrom(msg.sender, address(this), amount);
+            emit FundsDeposited(token, amount, msg.sender);
+        }
+    }
 
+    /// @notice функция возвращает баланс контракта
+    /// @param token адрес токена, баланс которого запрашиваем (для ETH условно нулевой адрес)
+    function getBalance(address token) public view returns (uint256) {
+        if (token == address(0)) {
+            return address(this).balance;
+        } else {
+            return IERC20(token).balanceOf(address(this));
+        }
+    }
    
     /*-------------- Функции для владельца -----------------*/
    
     /// @notice функция позволяет вывести средства с контракта
     /// @param amount сумма вывода
-    /// @param recipient адрес вывода    
-   function withrawFunds (uint256 amount, address payable recipient) external onlyOwner() {
+    /// @param recipient адрес вывода       
+    function withdraw(address token, uint256 amount, address recipient) external onlyOwner {
         
-        require(amount <= address(this).balance, InsufficientFunds (amount, address(this).balance));
+        if (token == address(0)) {
+            
+            require(amount <= address(this).balance, InsufficientFunds (amount, address(this).balance));
+            (bool success, ) = recipient.call{value: amount}("");
+            require(success, MoneyTransferFailed(amount, recipient));
+            
+        } else {
 
-        (bool success, ) = recipient.call{value: amount}("");
-        require(success, MoneyTransferFailed(amount, recipient));
+            require(amount <= getBalance(token), InsufficientFunds (amount, getBalance(token)));
+
+            IERC20(token).transfer(recipient, amount);
+        }
+        emit FundsWithdrawn(token, amount, recipient);
     }
+
 
     /*-------------- Служебные функции -----------------*/
     

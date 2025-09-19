@@ -71,5 +71,17 @@ interface IExecutorErrors {
 
     /// @notice ошибка индицирует недостаточность баланса USDC пользователя для выполнения перевода
     error InsufficientUSDCBalance();
+
+    /// @notice ошибка индицирует некорректную сумму пополнения контракта    
+    error IncorrectDepositAmount();
+
+    /// @notice ошибка индицирует неавторизованное обращение к функции использования и возврата флэш-займа 
+    error UnauthorizedExecution();
+
+    /// @notice ошибка индицирует некорректный параметр инициатора в функции использования и возврата флэш-займа 
+    error InvalidExecutionInitiator();       
     
+    /// @notice ошибка индицирует использование неподдерживаемого токена в операцияx AAVE
+    /// @param token адрес токена, переданного в функцию
+    error NotSupportedAsset(address token);    
 }
