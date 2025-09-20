@@ -1,7 +1,7 @@
 import { loadFixture, ethers, expect } from "./setup";
 import { toBytes8 } from"./test-helpers";
 
-//тесты используют контракт-заглушку. На форке не запускать - отвалятся, так как время блока ра
+//тесты используют контракт-заглушку. На форке не запускать - отвалятся, так как время блока разное
 describe("Chainlink Oracle", function() {
     async function deploy() {                
         const [user0, user1, user2] = await ethers.getSigners();
@@ -12,9 +12,9 @@ describe("Chainlink Oracle", function() {
         const validFeed = await (await ethers.getContractFactory("MockAggregatorV3"))
             .deploy(1000n, now, 1, 1);
 
-        // Устаревший фид: время более часа назад
+        // Устаревший фид: время более трех часов назад
         const outdatedFeed = await (await ethers.getContractFactory("MockAggregatorV3"))
-            .deploy(1000n, now - 7200, 1, 1);
+            .deploy(1000n, now - 10400, 1, 1);
 
         // Некорректная цена (отрицательная)
         const invalidFeed = await (await ethers.getContractFactory("MockAggregatorV3"))

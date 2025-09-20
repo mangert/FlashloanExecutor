@@ -107,21 +107,21 @@ contract FlashloanExecutor is
     mapping (
         bytes8  pair =>
         address priceFeedAddress
-    ) chainlinkPriceFeeds;   
+    ) public chainlinkPriceFeeds;   
 
     /// @notice хранилище адресов токенов для Uniswap
     /// тикер токена => адрес контракта токена
     mapping (
         bytes8  tokenName =>
         address tokenAddress
-    ) tokenAddresses;  
+    ) public tokenAddresses;  
     
     /// @notice хранилище адресов uniswap пулов для валютных пар
     /// имя пары => адрес пула
     mapping (
         bytes8  pair =>
         address uniswapPool
-    ) uniswapPools;   
+    ) public uniswapPools;   
     /// @notice хранилище адресов uniswap доверенных пулов для валютных пар
     mapping(address => bool) public approvedPools;
 
@@ -139,7 +139,7 @@ contract FlashloanExecutor is
         //начальные установки: добавим в справочник фиды Chainlink для двух пар 
         //потом можно будет добавлять через функцию
         chainlinkPriceFeeds[bytes8 ("ETHUSD")] = 0x694AA1769357215DE4FAC081bf1f309aDC325306;
-        chainlinkPriceFeeds[bytes8 ("DAIUSD")] = 0x14866185B1962B63C3Ea9E03Bc1da838bab34C19;    
+        chainlinkPriceFeeds[bytes8 ("DAIUSD")] = 0x14866185B1962B63C3Ea9E03Bc1da838bab34C19;           
 
         //для uniswap
         //начальные установки: добавим в справочник адрес пула uniswap в Sepolia
@@ -180,7 +180,7 @@ contract FlashloanExecutor is
         require(price > 0, InvalidPriceReceipt()); 
         // Проверка, что ответ не устарел и данные получены недавно
         require(answeredInRound >= roundId &&
-                (block.timestamp - updatedAt < 3600) //меньше часа
+                (block.timestamp - updatedAt < 7200) //меньше двух часов
                 , OutdatedPriceData());
         return uint256(price);
     }
@@ -348,13 +348,14 @@ contract FlashloanExecutor is
         uint256 premium,
         address initiator,
         bytes calldata params
-    ) external override returns (bool) {
+    ) external override returns (bool) {        
         // будем брать займы только в DAI, считаем, что такая у нас стратегия
         require(asset == DAI, NotSupportedAsset(asset));
         //проверяем, что функцию запустил кто нужно (то есть пул AAVE)
         require(msg.sender == address(aavePool), UnauthorizedExecution());
         // и с правильным параметром
         require(initiator == address(this), InvalidExecutionInitiator());       
+
         
         // Делаем обмен демонстрационные обмены через функцию-заглушку
         uint256 amountOut = demoSwapDAIUCDC(DAI, amount, AAVE_USDC);
