@@ -40,7 +40,7 @@ describe("Uniswap Exchange tests", function() {
         const initialUsdcBalance = await usdc.balanceOf(await executor.getAddress());       
         
         const loanAmount = BigInt(10e13);
-                
+
         //запускаем транзу по взятию флэшлоан
         const txFlashloan = await executor.requestFlashLoan(daiAddr, loanAmount);             
         
@@ -67,8 +67,7 @@ describe("Uniswap Exchange tests", function() {
             expect(swapDaiArgs.tokenOut).equal(usdcAddr);
 
             const amountOut = swapDaiArgs.amountOut;
-
-            
+                        
             //USDC -> DAI 
             const swapUSDCEvent = events[1];
             expect(swapUSDCEvent.name).equal("FakeTokensSwapped");

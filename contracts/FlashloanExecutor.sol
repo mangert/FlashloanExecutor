@@ -28,7 +28,7 @@ contract FlashloanExecutor is
     
     //адреса для Uniswap
     // источник:
-    // https://docs.uniswap.org/contracts/v3/reference/deployments/ethereum-deployments?utm_source=chatgpt.com    
+    // https://docs.uniswap.org/contracts/v3/reference/deployments/ethereum-deployments    
     address public constant SWAP_ROUTER = 0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E; 
 
     address public constant USDC = 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238; // USDC в Uniswap Sepolia    
@@ -37,17 +37,51 @@ contract FlashloanExecutor is
 
     //константы для AAVE
     address public constant AAVE_POOL_ADDRESSES_PROVIDER = 0x012bAC54348C0E635dCAc9D5FB99f06F24136C9A;
-    address public constant AAVE_USDC = 0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8; // USDC в AAVE Sepolia                                        
     
-    IPool public immutable aavePool;
-
+    //адреса токенов (отличаются от тех, которые есть в юнисвап)
+    address public constant AAVE_USDC = 0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8; // USDC в AAVE Sepolia                                        
     address public constant DAI = 0xFF34B3d4Aee8ddCd6F9AFFFB6Fe49bD371b8a357;
+    
+    IPool public immutable aavePool; //инициализируем в конструкторе    
 
+    //чтобы удобнее было цены приводить при fake-обмене и не делать лишние запросы к контракту токена
     uint8 public constant DAI_DECIMALS = 18;
     uint8 public constant USDC_DECIMALS = 6;
-    uint8 public constant CHAINLINK_PRICE_DECIMALS = 8;
+    uint8 public constant CHAINLINK_PRICE_DECIMALS = 8;    
+    
+    /// @notice адрес владельца
+    address public owner;
+    
+    /// @notice хранилище адресов фидов chainlink для валютных пар
+    /// имя пары => адрес фида
+    mapping (
+        bytes8  pair =>
+        address priceFeedAddress
+    ) public chainlinkPriceFeeds;   
 
+    /// @notice хранилище адресов токенов для Uniswap
+    /// тикер токена => адрес контракта токена
+    mapping (
+        bytes8  tokenName =>
+        address tokenAddress
+    ) public tokenAddresses;  
+    
+    /// @notice хранилище адресов uniswap пулов для валютных пар
+    /// имя пары => адрес пула
+    mapping (
+        bytes8  pair =>
+        address uniswapPool
+    ) public uniswapPools;   
+    /// @notice хранилище адресов uniswap доверенных пулов для валютных пар
+    mapping(address => bool) public approvedPools;
 
+    //модификатор проверяет права на выполнение функций только для владельца
+    modifier onlyOwner() {
+        require(msg.sender == owner, NotAnOwner(msg.sender));
+        _;
+    }
+
+    //события
     /// @notice  событие индицирует получение ценовой информации от фида Chainlink
     /// @param  pairPrice полученное значение цены
     /// @param  pair обозначение валютной пары
@@ -96,40 +130,7 @@ contract FlashloanExecutor is
     /// @param amountIn входящая сумма
     /// @param tokenOut адрес исходящего токена
     /// @param amountOut полученная сумма
-    event FakeTokensSwapped(address tokenIn, uint256 amountIn, address tokenOut, uint256 amountOut); 
-    
-    
-    /// @notice адрес владельца
-    address public owner;
-    
-    /// @notice хранилище адресов фидов chainlink для валютных пар
-    /// имя пары => адрес фида
-    mapping (
-        bytes8  pair =>
-        address priceFeedAddress
-    ) public chainlinkPriceFeeds;   
-
-    /// @notice хранилище адресов токенов для Uniswap
-    /// тикер токена => адрес контракта токена
-    mapping (
-        bytes8  tokenName =>
-        address tokenAddress
-    ) public tokenAddresses;  
-    
-    /// @notice хранилище адресов uniswap пулов для валютных пар
-    /// имя пары => адрес пула
-    mapping (
-        bytes8  pair =>
-        address uniswapPool
-    ) public uniswapPools;   
-    /// @notice хранилище адресов uniswap доверенных пулов для валютных пар
-    mapping(address => bool) public approvedPools;
-
-    //модификатор проверяет права на выполнение функций только для владельца
-    modifier onlyOwner() {
-        require(msg.sender == owner, NotAnOwner(msg.sender));
-        _;
-    }
+    event FakeTokensSwapped(address tokenIn, uint256 amountIn, address tokenOut, uint256 amountOut);     
     
     constructor() 
         FlashLoanSimpleReceiverBase(IPoolAddressesProvider(AAVE_POOL_ADDRESSES_PROVIDER)) {

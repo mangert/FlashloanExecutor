@@ -14,13 +14,15 @@ async function main() {
 
     const executor_Factory = await ethers.getContractFactory(contractName);
     const executor = await executor_Factory.deploy();    
+    
     await executor.waitForDeployment(); 
 
     const contractAddress = await executor.getAddress();
-    console.log("Deployed contract at:", contractAddress);
+    console.log("Deployed contract at:", contractAddress);    
     
     //ждем подтверждения, чтобы верификация не отвалилась
     const tx = executor.deploymentTransaction();
+    
     if (tx) {
         await tx.wait(5); // ← ждем 5 подтверждений
     }        

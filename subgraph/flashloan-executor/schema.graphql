@@ -1,0 +1,85 @@
+type FakeTokensSwapped @entity(immutable: true) {
+  id: Bytes!
+  tokenIn: Bytes! # address
+  amountIn: BigInt! # uint256
+  tokenOut: Bytes! # address
+  amountOut: BigInt! # uint256
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+type FlashLoanExecuted @entity(immutable: true) {
+  id: Bytes!
+  asset: Bytes! # address
+  amount: BigInt! # uint256
+  premium: BigInt! # uint256
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+type FundsDeposited @entity(immutable: true) {
+  id: Bytes!
+  token: Bytes! # address
+  amount: BigInt! # uint256
+  depositor: Bytes! # address
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+type FundsWithdrawn @entity(immutable: true) {
+  id: Bytes!
+  value: BigInt! # uint256
+  recipient: Bytes! # address
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+type FundsWithdrawn1 @entity(immutable: true) {
+  id: Bytes!
+  token: Bytes! # address
+  amount: BigInt! # uint256
+  recipient: Bytes! # address
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+type NewFeedAdded @entity(immutable: true) {
+  id: Bytes!
+  pair: Bytes! # bytes8
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+type NewPoolAdded @entity(immutable: true) {
+  id: Bytes!
+  pair: Bytes! # bytes8
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+type OracleChecked @entity(immutable: true) {
+  id: Bytes!
+  pairPrice: BigInt! # uint256
+  pair: Bytes! # bytes8
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
+
+type TokensSwapped @entity(immutable: true) {
+  id: Bytes!
+  tokenIn: Bytes! # address
+  amountIn: BigInt! # uint256
+  tokenOut: Bytes! # address
+  amountOut: BigInt! # uint256
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}

@@ -1,0 +1,50 @@
+specVersion: 1.3.0
+indexerHints:
+  prune: auto
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum
+    name: FlashloanExecutor
+    network: sepolia
+    source:
+      address: "0xda6E15B721e0Fd4861b9f930Bf19347Fd4f7cd87"
+      abi: FlashloanExecutor
+      startBlock: 9249308
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - FakeTokensSwapped
+        - FlashLoanExecuted
+        - FundsDeposited
+        - FundsWithdrawn
+        - FundsWithdrawn1
+        - NewFeedAdded
+        - NewPoolAdded
+        - OracleChecked
+        - TokensSwapped
+      abis:
+        - name: FlashloanExecutor
+          file: ./abis/FlashloanExecutor.json
+      eventHandlers:
+        - event: FakeTokensSwapped(address,uint256,address,uint256)
+          handler: handleFakeTokensSwapped
+        - event: FlashLoanExecuted(indexed address,uint256,uint256)
+          handler: handleFlashLoanExecuted
+        - event: FundsDeposited(indexed address,uint256,indexed address)
+          handler: handleFundsDeposited
+        - event: FundsWithdrawn(uint256,indexed address)
+          handler: handleFundsWithdrawn
+        - event: FundsWithdrawn(indexed address,uint256,indexed address)
+          handler: handleFundsWithdrawn1
+        - event: NewFeedAdded(bytes8)
+          handler: handleNewFeedAdded
+        - event: NewPoolAdded(bytes8)
+          handler: handleNewPoolAdded
+        - event: OracleChecked(uint256,bytes8)
+          handler: handleOracleChecked
+        - event: TokensSwapped(address,uint256,address,uint256)
+          handler: handleTokensSwapped
+      file: ./src/flashloan-executor.ts
