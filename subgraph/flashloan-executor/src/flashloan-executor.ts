@@ -1,3 +1,4 @@
+import { BigInt } from "@graphprotocol/graph-ts"
 import {
   FakeTokensSwapped as FakeTokensSwappedEvent,
   FlashLoanExecuted as FlashLoanExecutedEvent,
@@ -10,6 +11,7 @@ import {
   TokensSwapped as TokensSwappedEvent
 } from "../generated/FlashloanExecutor/FlashloanExecutor"
 import {
+  Asset,
   FakeTokensSwapped,
   FlashLoanExecuted,
   FundsDeposited,
@@ -50,6 +52,22 @@ export function handleFlashLoanExecuted(event: FlashLoanExecutedEvent): void {
   entity.transactionHash = event.transaction.hash
 
   entity.save()
+
+  // Обновляем статистику по активу
+  let asset = Asset.load(event.params.asset)
+  if (!asset) {
+    // Создаем новый актив, если его нет
+    asset = new Asset(event.params.asset)
+    asset.totalBorrowed = BigInt.fromI32(0)
+    asset.totalPremium = BigInt.fromI32(0)
+    asset.loanCount = BigInt.fromI32(0)
+  }
+  
+  // Обновляем агрегированные данные
+  asset.totalBorrowed = asset.totalBorrowed.plus(event.params.amount)
+  asset.totalPremium = asset.totalPremium.plus(event.params.premium)
+  asset.loanCount = asset.loanCount.plus(BigInt.fromI32(1))
+  asset.save()
 }
 
 export function handleFundsDeposited(event: FundsDepositedEvent): void {

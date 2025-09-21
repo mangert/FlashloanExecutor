@@ -11,12 +11,22 @@ type FakeTokensSwapped @entity(immutable: true) {
 
 type FlashLoanExecuted @entity(immutable: true) {
   id: Bytes!
-  asset: Bytes! # address
+  asset: Asset! # Ссылка на сущность Asset
   amount: BigInt! # uint256
   premium: BigInt! # uint256
   blockNumber: BigInt!
   blockTimestamp: BigInt!
   transactionHash: Bytes!
+}
+
+# собираем статистику по суммарному флэшлоан в разрезе активов
+# так как наш контракт демонстрационый и умеет брать только DAI, то результат будет из одной строки
+type Asset @entity (immutable: false) {
+  id: Bytes! # address актива
+  totalBorrowed: BigInt! # Общая сумма займов
+  totalPremium: BigInt! # Общая сумма комиссий
+  loanCount: BigInt! # Количество займов
+  loans: [FlashLoanExecuted!]! @derivedFrom(field: "asset")
 }
 
 type FundsDeposited @entity(immutable: true) {
