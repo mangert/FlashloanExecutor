@@ -4,7 +4,7 @@ import { toBytes8 } from"./test-helpers";
 import { BytesLike, getBytes, LogDescription } from "ethers";
 
 // тест сделан под форк. Без форка не сработает!!!
-describe("Uniswap Exchange tests", function() {
+describe("AAVE Flashloan tests", function() {
     async function deploy() {                
         const [owner] = await ethers.getSigners();
         

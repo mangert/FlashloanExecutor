@@ -1,11 +1,12 @@
-import { createPublicClient, createWalletClient, http, defineChain } from 'viem';
+import { createPublicClient, createWalletClient, http, defineChain, getContract, formatUnits, parseUnits, parseAbiItem } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 import dotenv from 'dotenv';
-import { CONTRACT_ADDRESS } from './setup';
+import { CONTRACT_ADDRESS, USDC, WETH9, AAVE_USDC, DAI, erc20ABI } from './setup';
+import { CONTRACT_ABI } from './contractABI';
 import path from 'path';
 
-// Простой способ - предполагаем, что .env в корне проекта на два уровня выше
+// .env в корне проекта на два уровня выше
 const envPath = path.resolve(__dirname, '..', '..', '.env');
 console.log('Loading .env from:', envPath);
 // Загружаем переменные окружения
@@ -37,35 +38,6 @@ if (PRIVATE_KEY.length !== 66) {
 
 const RPC_URL = process.env.ALCHEMY_API_URL || '';
 
-// ABI контракта (упрощенная версия)
-const CONTRACT_ABI = [
-  {
-    name: 'getBalance',
-    type: 'function',
-    inputs: [{ name: 'token', type: 'address' }],
-    outputs: [{ name: '', type: 'uint256' }],
-    stateMutability: 'view'
-  },
-  {
-    name: 'requestFlashLoan',
-    type: 'function',
-    inputs: [
-      { name: 'token', type: 'address' },
-      { name: 'amount', type: 'uint256' }
-    ],
-    outputs: [],
-    stateMutability: 'nonpayable'
-  },
-  {
-    name: 'FlashLoanExecuted',
-    type: 'event',
-    inputs: [
-      { name: 'asset', type: 'address', indexed: true },
-      { name: 'amount', type: 'uint256', indexed: false },
-      { name: 'premium', type: 'uint256', indexed: false }
-    ]
-  }
-] as const
 
 // Создание клиентов
 const publicClient = createPublicClient({
@@ -81,6 +53,27 @@ const walletClient = createWalletClient({
   transport: http(RPC_URL)
 });
 
+//вспомогательные функции
+//утилита для ожидаения подтверждений 
+async function waitForConfirmations(hash: `0x${string}`, confirmations: number = 2) {
+  console.log(`Waiting for ${confirmations} confirmation(s)...`);
+  
+  const receipt = await publicClient.waitForTransactionReceipt({
+    hash,
+    confirmations,
+    timeout: 180_000
+  });
+  
+  if (receipt.status === "success") {
+    console.log(`✅ Transaction confirmed after ${confirmations} confirmation(s)`);
+  } else {
+    console.error(`❌ Transaction failed after ${confirmations} confirmation(s)`);
+  }
+  
+  return receipt;
+}
+
+//-----------------------------------------------//
 async function main() {
   console.log('Starting interactions');
   
@@ -108,36 +101,188 @@ async function main() {
     abi: CONTRACT_ABI,
     functionName: 'getBalance',
     args: ['0x0000000000000000000000000000000000000000'] // ETH address
-  });
+  });  
+
   console.log(`Contract balance via function: ${contractBalance.toString()}`);   
+  
+  //---------------------- Работа с контрактом и токенами ---------------------------
+  console.log("---------------------- Работа с контрактом и токенами ---------------------------");
+
+  //Получим контракт в объект и будем к нему обращаться через объект
+  const myContract = getContract({
+    abi: CONTRACT_ABI,
+    address: CONTRACT_ADDRESS,
+    client: {
+      public: publicClient,
+      wallet: walletClient,
+    }
+  });
+  
+  //5. попробуем вызвать функцию обмена USDC на eth на юнисвап
+  // для этого сначала дадим контраку апрув на 10 баксов  
+  const amountUSDC = 10000000n;
+  const txApprove = await walletClient.writeContract({    
+    address: USDC,
+    abi: erc20ABI,
+    functionName: 'approve',
+    args: [CONTRACT_ADDRESS, amountUSDC] // ETH address
+  });
+
+  //проверим allowance
+  const allowance = await publicClient.readContract({
+    address: USDC,
+    abi: erc20ABI,
+    functionName: 'allowance',
+    args: [account.address, CONTRACT_ADDRESS]
+  });  
+
+  console.log(`USDC allowance: ${allowance.toString()}`);   
+
+  //проверим баланс кошелька
+  const balanceUSDC = await publicClient.readContract({    
+    address: USDC,
+    abi: erc20ABI,
+    functionName: 'balanceOf',
+    args: [account.address]
+  });
+
+  console.log(`USDC balance: ${balanceUSDC.toString()}`);   
 
   
-  
-  
+  //пробуем сделать обмен на  uniswap через нашу фунцию контракта
+  //сначала сделаем симуляцию
   /*
-  // 4. Запрос flash loan
-  console.log('Requesting flash loan...')
-  const hash = await walletClient.writeContract({
-    address: CONTRACT_ADDRESS,
-    abi: CONTRACT_ABI,
-    functionName: 'requestFlashLoan',
-    args: [
-      '0xFF34B3d4Aee8ddCd6F9AFFFB6Fe49bD371b8a357', // DAI address
-      BigInt(1000000000000000000) // 1 DAI
-    ]
-  })
-  console.log(`Transaction hash: ${hash}`)
+  try {
+    const swapRequest = await publicClient.simulateContract({
+      account: account, //вызываем от имени нашего кошелька
+      address: CONTRACT_ADDRESS,
+      abi: CONTRACT_ABI,
+      functionName: "swapUSDCToETH",
+      args: [amountUSDC, 0n]
+    }); 
   
-  // 5. Ожидание подтверждения
-  const receipt = await publicClient.waitForTransactionReceipt({ hash })
-  console.log(`Transaction confirmed in block: ${receipt.blockNumber}`)
+    console.log("✅ Simulation successful! Transaction would succeed");    
+    // ну раз симуляция получилась, сделаем реальный свап
+    const txHash = await myContract.write.swapUSDCToETH(
+      [amountUSDC, 0n],
+      {account: account}      
+    );
+
+  } catch (error) {
+    console.error("❌ Simulation failed:");   
+    
+    // Извлекаем причину ошибки
+    if (error instanceof Error) {
+      console.error("Error message:", error.message);
+    };    
+  };
+  // еще раз проверим баланс
+  const balanceUSDCNew = await publicClient.readContract({    
+    address: USDC,
+    abi: erc20ABI,
+    functionName: 'balanceOf',
+    args: [account.address]
+  });
   
-  // 6. Отправка ETH на другой адрес (пример)
+  console.log(`New USDC balance: ${balanceUSDCNew.toString()}`);   */
+
+  console.log("\n---------------------- Flashloan ---------------------------");
+
+  //6. Запрос flashloan на AAVE
+  
+  //сначала закинем неможно DAI на контракт, чтобы было чем оплатить комиссию    
+  // получим decimals, чтобы красиво было
+  const decimals = await publicClient.readContract({    
+    address: DAI,
+    abi: erc20ABI,
+    functionName: 'decimals'    
+  });
+  
+  const daiForPremium = parseUnits('10', decimals);  
+  //на всякий случай проверим баланс на кошельке
+  const walletDaiBalance = await publicClient.readContract({    
+    address: DAI,
+    abi: erc20ABI,
+    functionName: 'balanceOf',
+    args: [account.address]
+  });
+  console.log("DAI wallet balance: ", formatUnits(walletDaiBalance, decimals));
+  
+  //теперь переведем деньги на контракт
+  /*const txDaiTransfer = await walletClient.writeContract({    
+    address: DAI,
+    abi: erc20ABI,
+    functionName: 'transfer',
+    args: [CONTRACT_ADDRESS, daiForPremium]
+  });
+  //ждем 2 подтверждения
+  const receipt = await waitForConfirmations(txDaiTransfer, 2); */
+
+  //проверим баланс контракта
+  const contractDaiBalance = await myContract.read.getBalance([DAI]);
+  console.log("DAI contract balance: ", formatUnits(contractDaiBalance, decimals));
+
+  //теперь у нас есть DAI на оплату комиссии - попробуем запросить flashloan
+  // запрашивать будем в DAI
+  const flashAmount = BigInt(10e10);  
+  console.log('Requesting flash loan...');  
+  
+  try {
+      const txHash = await myContract.write.requestFlashLoan(
+        [DAI, flashAmount],
+        { 
+          account: account,
+          gas: 3000000n // Увеличиваем газ для безопасности - транза очень прожорливая
+        }
+      );     
+  
+    console.log(`Transaction hash: ${txHash}`);
+    
+    // Ждем подтверждения с таймаутом
+    const receipt = await publicClient.waitForTransactionReceipt({
+      hash: txHash,
+      confirmations: 2,
+      timeout: 60000 // 60 секунд таймаут
+    });
+    
+    // Проверяем статус транзакции
+    if (receipt.status === "success") {
+      console.log(`✅ Transaction successful in block ${receipt.blockNumber}`);
+      
+      // Проверяем события
+      const logs = await publicClient.getLogs({
+        address: CONTRACT_ADDRESS,
+        event: parseAbiItem('event FlashLoanExecuted(address indexed asset, uint256 amount, uint256 premium)'),
+        fromBlock: receipt.blockNumber,
+        toBlock: receipt.blockNumber
+      });
+      
+      if (logs.length > 0) {
+        console.log(`💰 FlashLoanExecuted event found. Premium: ${formatUnits(logs[0].args.premium!, 18)}`);        
+      } else {
+        console.log("⚠️  No FlashLoanExecuted event found");
+        
+      }
+    } else {       
+      console.log("❌ Transaction reverted");
+      console.log("Check the transaction in Etherscan for detailed revert reason");
+      console.log("Common reasons: Outdated Chainlink data, insufficient balance for premium");      
+    }          
+    
+    } catch (error) {
+        console.error("❌ Error sending transaction:", error); 
+        
+  }     
+
+  console.log("\n---------------------- Transfer ---------------------------");
+    
+  // 7. Отправка ETH на другой адрес (пример)
   const txHash = await walletClient.sendTransaction({
-    to: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e', // Пример адреса
+    to: '0x558860598923AbD7b391d4557DE6E9C03c2e47E2', // Пример адреса (мой второй кошелек)
     value: BigInt(1000000000000000) // 0.001 ETH
-  })
-  console.log(`ETH sent, transaction hash: ${txHash}`)*/
+  });
+  console.log(`ETH sent, transaction hash: ${txHash}`);
 }
 
 main().catch(console.error)
+
